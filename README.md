@@ -13,9 +13,11 @@
 
 ## 系统要求
 
-- 支持systemd(比如linux和bsd)
+- Linux 或 BSD/macOS
 - 安装了 Rime 输入法的 fcitx5
-- `busctl` 命令（通常来自 systemd 软件包）
+- 至少一个 D-Bus 命令行工具：
+  - Linux：`busctl`（来自 systemd 或 elogind），或 `basuctl`（来自 basu）(void linux测试)，或 `dbus-send`（来自 dbus）(未测试)
+  - BSD/macOS：`dbus-send`(无设备，未测试)
 
 ## 安装
 
@@ -40,7 +42,7 @@ vim.pack.add({
   { src = "https://github.com/Qiumix/rime-toggle.nvim" },
 })
 
-require('rime_toogle').setup({
+require('rime_toggle').setup({
   -- enabled = true,
 })
 ```
