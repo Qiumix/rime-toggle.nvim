@@ -10,19 +10,28 @@ local last_state_ascii = true
 local augroup_name = "RimeAutoMode"
 local group = api.nvim_create_augroup(augroup_name, { clear = true })
 
-local last_esc_time = 0
-local DOUBLE_CLICK_THRESHOLD = 250 * 1000000 -- 250ms
+local os_state = { judged = false, result = false }
+
+local function find_linux_dbus_tool()
+  for _, tool in ipairs { "busctl", "basuctl" } do
+    if vim.fn.executable(tool) == 1 then
+      return tool
+    end
+  end
+  return nil
+end
 
 local function init_exec()
   if os_type == "linux" then
-    if vim.fn.executable "busctl" ~= 1 then
-      vim.notify("Rime-DBus: busctl command not found", vim.log.levels.ERROR)
+    local tool = find_linux_dbus_tool()
+    if not tool then
+      vim.notify("Rime-DBus: neither busctl nor basuctl found", vim.log.levels.ERROR)
       return false
     end
 
     dbus_fn.get_state = function()
       local out = vim.fn.system {
-        "busctl",
+        tool,
         "--user",
         "call",
         "org.fcitx.Fcitx5",
@@ -30,13 +39,15 @@ local function init_exec()
         "org.fcitx.Fcitx.Rime1",
         "IsAsciiMode",
       }
-      return out:find "true" ~= nil
+      if vim.v.shell_error ~= 0 then
+        return nil
+      end
+      return out:find("true", 1, true) ~= nil
     end
 
     dbus_fn.set_state = function(state)
-      local state_str = state and "true" or "false"
       vim.fn.system {
-        "busctl",
+        tool,
         "--user",
         "call",
         "org.fcitx.Fcitx5",
@@ -44,7 +55,7 @@ local function init_exec()
         "org.fcitx.Fcitx.Rime1",
         "SetAsciiMode",
         "b",
-        state_str,
+        state and "true" or "false",
       }
     end
   elseif os_type == "bsd" then
@@ -62,18 +73,20 @@ local function init_exec()
         "/rime",
         "org.fcitx.Fcitx.Rime1.IsAsciiMode",
       }
-      return out:find "true" ~= nil
+      if vim.v.shell_error ~= 0 then
+        return nil
+      end
+      return out:find("true", 1, true) ~= nil
     end
 
     dbus_fn.set_state = function(state)
-      local state_str = state and "true" or "false"
       vim.fn.system {
         "dbus-send",
         "--session",
         "--dest=org.fcitx.Fcitx5",
         "/rime",
         "org.fcitx.Fcitx.Rime1.SetAsciiMode",
-        "boolean:" .. state_str,
+        "boolean:" .. (state and "true" or "false"),
       }
     end
   end
@@ -81,45 +94,40 @@ local function init_exec()
   return true
 end
 
-local function init_os()
-  local judged = false
-  local result = false
-  return function()
-    if judged then
-      return result
-    end
-    judged = true
-    if vim.fn.has "linux" == 1 and vim.fn.has "android" ~= 1 then
-      os_type = "linux"
-      result = init_exec()
-    elseif vim.fn.has "bsd" == 1 or vim.fn.has "mac" == 1 then
-      os_type = "bsd"
-      result = init_exec()
-    else
-      result = false
-    end
-    return result
+local function check_os_and_cmd()
+  if os_state.judged then
+    return os_state.result
   end
-end
+  os_state.judged = true
 
-local check_os_and_cmd = init_os()
+  if vim.fn.has "linux" == 1 and vim.fn.has "android" ~= 1 then
+    os_type = "linux"
+  elseif vim.fn.has "bsd" == 1 or vim.fn.has "mac" == 1 then
+    os_type = "bsd"
+  else
+    os_state.result = false
+    return false
+  end
+
+  os_state.result = init_exec()
+  return os_state.result
+end
 
 rt.enable = function()
   enabled = true
 end
+
 rt.disable = function()
   enabled = false
 end
+
 rt.toggle = function()
   enabled = not enabled
 end
 
-rt.force_ascii = function()
-  last_state_ascii = true
-  dbus_fn.set_state(true)
-end
-
 rt.setup = function(opts)
+  os_state.judged = false
+
   if not check_os_and_cmd() then
     enabled = false
     return
@@ -138,7 +146,11 @@ rt.setup = function(opts)
       if not enabled then
         return
       end
-      last_state_ascii = dbus_fn.get_state()
+      local state = dbus_fn.get_state()
+      if state == nil then
+        return
+      end
+      last_state_ascii = state
       if not last_state_ascii then
         dbus_fn.set_state(true)
       end
